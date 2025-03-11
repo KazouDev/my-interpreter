@@ -1,7 +1,11 @@
+use std::collections::HashMap;
+use std::env::var;
+use std::error::Error;
+use std::fmt::{Debug, Display, Formatter};
 use crate::lexer::Token;
 
 #[derive(Debug)]
-enum BinaryExpressionType {
+pub enum BinaryExpressionType {
     Sum,
     Product,
     Minus,
@@ -10,13 +14,32 @@ enum BinaryExpressionType {
 
 #[derive(Debug)]
 pub enum Expression {
-    Number(i64),
+    Number(f64),
+    Identifier(String),
     BinaryExpression {
         op: BinaryExpressionType,
         left: Box<Expression>,
         right: Box<Expression>
     }
 }
+
+#[derive(Debug)]
+pub enum Statement {
+    Expression(Expression),
+    Print(Expression),
+    Assignment(String, Expression),
+}
+
+#[derive(Debug)]
+pub struct ParseError(String);
+
+impl Display for ParseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[PARSER] Error : {}", self.0)
+    }
+}
+
+impl Error for ParseError {}
 
 pub struct Parser<I: Iterator<Item = Token>> {
     tokens: I,
@@ -27,6 +50,38 @@ impl<I: Iterator<Item=Token>> Parser<I> {
     pub fn new(mut tokens: I) -> Self {
         let current = tokens.next();
         Self { tokens, current }
+    }
+
+    pub fn parse(&mut self) -> Result<Vec<Statement>, ParseError> {
+        let mut statements = Vec::new();
+        while let Some(token) = &self.current {
+            if let Token::Identifier(id) = token {
+                statements.push(match id.as_str() {
+                    "zipette" => {
+                        self.consume();
+                       Statement::Print(self.parse_expression())
+                    },
+                    "vicer" => {
+                        if let Some(Token::Identifier(token)) = self.tokens.next() {
+                            self.consume();
+                            Statement::Assignment(token, self.parse_expression())
+                        } else {
+                            return Err(ParseError("Unexpected end of statement (; required)".to_string()));
+                        }
+                    },
+                    _ => return Err(ParseError(format!("Expected identifier, found '{}'", id)))
+                });
+            } else {
+                statements.push(Statement::Expression(self.parse_expression()))
+            }
+
+            if !matches!(self.current, Some(Token::EndOfStatement)) {
+                return Err(ParseError("Unexpected end of statement (; required)".to_string()));
+            }
+            self.consume();
+
+        }
+        Ok(statements)
     }
 
     fn consume(&mut self) {
@@ -107,6 +162,10 @@ impl<I: Iterator<Item=Token>> Parser<I> {
                 } else {
                     panic!("Expected ')' at the end");
                 }
+            },
+            Some(Token::Identifier(id)) => {
+                self.consume();
+                Expression::Identifier(id)
             }
             other => {
                 println!("Unexpected token: {:?}", other);
@@ -116,18 +175,48 @@ impl<I: Iterator<Item=Token>> Parser<I> {
     }
 }
 
+#[derive(Debug)]
+pub struct ExecuteError(String);
+
+impl Display for ExecuteError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[EXECUTION] Error : {}", self.0)
+    }
+}
+
+impl Error for ExecuteError {}
+
 impl Expression {
-    pub fn evaluate(&self) -> i64 {
+    pub fn evaluate(&self, variables: &HashMap<String, f64>) -> Result<f64, ExecuteError> {
         match self {
-            Expression::Number(n) => *n,
+            Expression::Identifier(id) => {
+                if let Some(value) = variables.get(id) {
+                    Ok(value.clone())
+                } else {
+                    Err(ExecuteError(format!("use of undefined variable {}", id)))
+                }
+            },
+            Expression::Number(n) => Ok(*n),
             Expression::BinaryExpression { op, left, right} => {
                 match op {
-                    BinaryExpressionType::Sum => left.evaluate() + right.evaluate(),
-                    BinaryExpressionType::Product => left.evaluate() * right.evaluate(),
-                    BinaryExpressionType::Minus => left.evaluate() - right.evaluate(),
-                    BinaryExpressionType::Exponent => left.evaluate().pow(right.evaluate().try_into().expect("exponent overflow (u32)")),
+                    BinaryExpressionType::Sum => Ok(left.evaluate(variables)? + right.evaluate(variables)?),
+                    BinaryExpressionType::Product => Ok(left.evaluate(variables)? * right.evaluate(variables)?),
+                    BinaryExpressionType::Minus => Ok(left.evaluate(variables)? - right.evaluate(variables)?),
+                    BinaryExpressionType::Exponent => Ok(left.evaluate(variables)?.powf(right.evaluate(variables)?)),
                 }
             }
         }
+    }
+}
+
+impl Statement {
+    pub fn execute(self, variables: &mut HashMap<String, f64>) -> Result<(), ExecuteError> {
+        Ok(match self {
+            Statement::Expression(expr) => expr.evaluate(variables).map(|_| ())?,
+            Statement::Print(expr) => println!("{}", expr.evaluate(variables)?),
+            Statement::Assignment(lhs, rhs) => {
+                variables.insert(lhs, rhs.evaluate(variables)?);
+            }
+        })
     }
 }

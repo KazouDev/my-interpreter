@@ -3,7 +3,9 @@ use std::fmt::{self, Display, Formatter};
 
 #[derive(Debug)]
 pub enum Token {
-    Number(i64),
+    Number(f64),
+    EndOfStatement,
+    Identifier(String),
     Minus,
     Plus,
     Product,
@@ -15,7 +17,7 @@ pub enum Token {
 }
 
 #[derive(Debug)]
-struct LexerError(String);
+pub struct LexerError(String);
 
 impl Display for LexerError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -69,7 +71,12 @@ impl<'a> Lexer<'a> {
                 self.consume();
                 Token::CloseParen
             },
+            ';' => {
+                self.consume();
+                Token::EndOfStatement
+            },
             '0'..='9' => self.parse_number(false),
+            'a'..='z' | 'A'..='Z' => self.parse_identifier(),
             _ => {
                 self.consume();
                 Token::Useless(c)
@@ -80,8 +87,15 @@ impl<'a> Lexer<'a> {
     }
 
     fn parse_number(&mut self, is_negative: bool) -> Token {
-        let num_str = self.consume_while(|c| c.is_ascii_digit());
-        match num_str.parse::<i64>() {
+        let mut num_str = self.consume_while(|c| c.is_ascii_digit());
+
+        if self.peek_char() == Some('.') || self.peek_char() == Some(',') {
+            self.consume();
+            num_str += ".";
+            num_str += self.consume_while(|r#c| c.is_ascii_digit()).as_str();
+        }
+
+        match num_str.parse::<f64>() {
             Ok(n) => Token::Number(if is_negative { -n } else { n }),
             Err(_) => Token::Bad(LexerError(format!("Invalid number: {}", num_str))),
         }
@@ -89,6 +103,10 @@ impl<'a> Lexer<'a> {
 
     fn skip_whitespace(&mut self) {
         self.consume_while(|c| c.is_whitespace());
+    }
+
+    fn parse_identifier(&mut self) -> Token {
+        Token::Identifier(self.consume_while(|c| c.is_ascii_alphabetic() && c != ';'))
     }
 
     fn consume(&mut self) -> Option<char> {
