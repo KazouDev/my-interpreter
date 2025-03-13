@@ -9,11 +9,25 @@ pub enum Token {
     Minus,
     Plus,
     Product,
+    Division,
     Exponent,
     OpenParen,
     CloseParen,
     Useless(char),
     Bad(LexerError),
+    BytesLeft,
+    BytesRight,
+}
+
+pub struct Location {
+    line: usize,
+    start_column: usize,
+    end_column: usize
+}
+
+pub struct LocalizedToken {
+    pub token: Token,
+    pub loc: Location
 }
 
 #[derive(Debug)]
@@ -57,7 +71,12 @@ impl<'a> Lexer<'a> {
             }
             '*' => {
                 self.consume();
-                Token::Product
+                if self.peek_char() == Some('*') {
+                    self.consume();
+                    Token::Exponent
+                } else {
+                    Token::Product
+                }
             }
             '^' => {
                 self.consume();
@@ -74,6 +93,34 @@ impl<'a> Lexer<'a> {
             ';' => {
                 self.consume();
                 Token::EndOfStatement
+            },
+            '/' => {
+                self.consume();
+                Token::Division
+            },
+            '<' => {
+                if let Some(ch) = self.peek_char() {
+                    if ch == '<' {
+                        Token::BytesLeft
+                    } else {
+                        Token::Useless(ch)
+                    }
+                } else {
+                    Token::Useless('<')
+                }
+            },
+            '>' => {
+                self.consume();
+                if let Some(ch) = self.peek_char() {
+                    if ch == '>' {
+                        self.consume();
+                        Token::BytesRight
+                    } else {
+                        Token::Useless('>')
+                    }
+                } else {
+                    Token::Useless('>')
+                }
             },
             '0'..='9' => self.parse_number(false),
             'a'..='z' | 'A'..='Z' => self.parse_identifier(),
